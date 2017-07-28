@@ -44,12 +44,11 @@ function activateFileBrowser(app: JupyterLab, manager: IDocumentManager, factory
   manager.services.contents.addDrive(drive);
 
   // Create the file browser.
-  let browser = this._factory.createFileBrowser(NAMESPACE, {
+  let browser = factory.createFileBrowser(NAMESPACE, {
     commands: commands,
-    driveName: this._driveName
+    driveName: drive.name
   });
-
-    // Create the logout button.
+  browser.title.label = 'Share';
 
   // Add the file browser widget to the application restorer.
   restorer.add(browser, NAMESPACE);

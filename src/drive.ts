@@ -21,8 +21,8 @@ import {
 export
 class ShareDrive extends Drive implements Contents.IDrive {
 
-  get name(): 'Share' {
-    return 'Share';
+  constructor() {
+    super({ name: 'Share' });
   }
 
   get modelDBFactory(): ModelDB.IFactory {
