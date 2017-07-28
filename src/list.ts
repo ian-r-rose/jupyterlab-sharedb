@@ -2,7 +2,11 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  ArrayExt, ArrayIterator, IIterator, IterableOrArrayLike, each, toArray
+  JSONExt, JSONValue
+} from '@phosphor/coreutils';
+
+import {
+  ArrayExt, ArrayIterator, IIterator, IterableOrArrayLike, each
 } from '@phosphor/algorithm';
 
 import {
@@ -17,15 +21,31 @@ import {
  * A concrete implementation of [[IObservableList]].
  */
 export
-class ShareList<T> implements IObservableList<T> {
+class ShareList<T extends JSONValue> implements IObservableList<T> {
   /**
    * Construct a new observable map.
    */
-  constructor(options: ObservableList.IOptions<T> = {}) {
-    if (options.values !== void 0) {
-      each(options.values, value => { this._array.push(value); });
-    }
-    this._itemCmp = options.itemCmp || Private.itemCmp;
+  constructor(shareDoc: any, path: Array<string | number>) {
+    this._shareDoc = shareDoc;
+    this._path = path;
+    this._shareDoc.on('op', this._onOp.bind(this));
+    this._shareDoc.on('load', () => {
+      this._preparePath(this._path);
+      let pathExists = true;
+      let current = this._shareDoc.data;
+      for (let component of this._path) {
+        if (!current[component]) {
+          pathExists = false;
+          break;
+        }
+        current = current[component];
+      }
+      if (pathExists) {
+      } else {
+        this._shareDoc.submitOp({p: this._path, oi: []});
+      }
+    });
+    this._itemCmp = JSONExt.deepEqual;
   }
 
   /**
@@ -42,11 +62,23 @@ class ShareList<T> implements IObservableList<T> {
     return this._changed;
   }
 
+  get array(): T[] {
+    if (this._shareDoc.data) {
+      let current = this._shareDoc.data;
+      for (let component of this._path) {
+        current = current[component];
+      }
+      return current;
+    } else {
+      return [];
+    }
+  }
+
   /**
    * The length of the list.
    */
   get length(): number {
-    return this._array.length;
+    return this.array.length;
   }
 
   /**
@@ -65,7 +97,6 @@ class ShareList<T> implements IObservableList<T> {
     }
     this._isDisposed = true;
     Signal.clearData(this);
-    this.clear();
   }
 
 
@@ -81,7 +112,7 @@ class ShareList<T> implements IObservableList<T> {
    * No changes.
    */
   iter(): IIterator<T> {
-    return new ArrayIterator(this._array);
+    return new ArrayIterator(this.array);
   }
 
   /**
@@ -95,7 +126,7 @@ class ShareList<T> implements IObservableList<T> {
    * An `index` which is non-integral or out of range.
    */
   get(index: number): T | undefined {
-    return this._array[index];
+    return this.array[index];
   }
 
   /**
@@ -115,7 +146,10 @@ class ShareList<T> implements IObservableList<T> {
    * An `index` which is non-integral or out of range.
    */
   set(index: number, value: T): void {
-    let oldValue = this._array[index];
+    if (this._shareDoc.connection.state === 'connecting') {
+      return;
+    }
+    let oldValue = this.array[index];
     if (value === undefined) {
       throw new Error('Cannot set an undefined item');
     }
@@ -124,13 +158,10 @@ class ShareList<T> implements IObservableList<T> {
     if (itemCmp(oldValue, value)) {
       return;
     }
-    this._array[index] = value;
-    this._changed.emit({
-      type: 'set',
-      oldIndex: index,
-      newIndex: index,
-      oldValues: [oldValue],
-      newValues: [value]
+    this._shareDoc.submitOp({
+      p: [...this._path, index],
+      ld: oldValue,
+      li: value
     });
   }
 
@@ -148,15 +179,15 @@ class ShareList<T> implements IObservableList<T> {
    * No changes.
    */
   push(value: T): number {
-    let num = this._array.push(value);
-    this._changed.emit({
-      type: 'add',
-      oldIndex: -1,
-      newIndex: this.length - 1,
-      oldValues: [],
-      newValues: [value]
+    if (this._shareDoc.connection.state === 'connecting') {
+      return;
+    }
+    let len = this.length;
+    this._shareDoc.submitOp({
+      p: [...this._path, len],
+      li: value
     });
-    return num;
+    return len+1;
   }
 
   /**
@@ -179,13 +210,12 @@ class ShareList<T> implements IObservableList<T> {
    * An `index` which is non-integral.
    */
   insert(index: number, value: T): void {
-    ArrayExt.insert(this._array, index, value);
-    this._changed.emit({
-      type: 'add',
-      oldIndex: -1,
-      newIndex: index,
-      oldValues: [],
-      newValues: [value]
+    if (this._shareDoc.connection.state === 'connecting') {
+      return;
+    }
+    this._shareDoc.submitOp({
+      p: [...this._path, index],
+      li: value
     });
   }
 
@@ -204,8 +234,11 @@ class ShareList<T> implements IObservableList<T> {
    * Iterators pointing at the removed value and beyond are invalidated.
    */
   removeValue(value: T): number {
+    if (this._shareDoc.connection.state === 'connecting') {
+      return -1;
+    }
     let itemCmp = this._itemCmp;
-    let index = ArrayExt.findFirstIndex(this._array, item => {
+    let index = ArrayExt.findFirstIndex(this.array, item => {
       return itemCmp(item, value);
     });
     this.remove(index);
@@ -230,18 +263,18 @@ class ShareList<T> implements IObservableList<T> {
    * An `index` which is non-integral.
    */
   remove(index: number): T | undefined {
-    let value = ArrayExt.removeAt(this._array, index);
-    if (value === undefined) {
+    if (this._shareDoc.connection.state === 'connecting') {
       return;
     }
-    this._changed.emit({
-      type: 'remove',
-      oldIndex: index,
-      newIndex: -1,
-      newValues: [],
-      oldValues: [value]
+    if (index < 0 || index >= this.length) {
+      return undefined;
+    }
+    let oldValue = this.array[index];
+    this._shareDoc.submitOp({
+      p: [...this._path, index],
+      ld: oldValue
     });
-    return value;
+    return oldValue;
   }
 
   /**
@@ -254,15 +287,12 @@ class ShareList<T> implements IObservableList<T> {
    * All current iterators are invalidated.
    */
   clear(): void {
-    let copy = this._array.slice();
-    this._array.length = 0;
-    this._changed.emit({
-      type: 'remove',
-      oldIndex: 0,
-      newIndex: 0,
-      newValues: [],
-      oldValues: copy
-    });
+    if (this._shareDoc.connection.state === 'connecting') {
+      return;
+    }
+    while (this.length) {
+      this.remove(0);
+    }
   }
 
   /**
@@ -283,18 +313,12 @@ class ShareList<T> implements IObservableList<T> {
    * A `fromIndex` or a `toIndex` which is non-integral.
    */
   move(fromIndex: number, toIndex: number): void {
+    if (this._shareDoc.connection.state === 'connecting') {
+      return;
+    }
     if (this.length <= 1 || fromIndex === toIndex) {
       return;
     }
-    let values = [this._array[fromIndex]];
-    ArrayExt.move(this._array, fromIndex, toIndex);
-    this._changed.emit({
-      type: 'move',
-      oldIndex: fromIndex,
-      newIndex: toIndex,
-      oldValues: values,
-      newValues: values
-    });
   }
 
   /**
@@ -311,18 +335,15 @@ class ShareList<T> implements IObservableList<T> {
    * No changes.
    */
   pushAll(values: IterableOrArrayLike<T>): number {
-    let newIndex = this.length;
-    let count = 0;
+    if (this._shareDoc.connection.state === 'connecting') {
+      return 0;
+    }
+    let idx = this.length;
     each(values, value => {
-      this._array.push(value);
-      count++;
-    });
-    this._changed.emit({
-      type: 'add',
-      oldIndex: -1,
-      newIndex,
-      oldValues: [],
-      newValues: toArray(values)
+      this._shareDoc.submitOp({
+        p: [...this._path, idx++],
+        li: value
+      });
     });
     return this.length;
   }
@@ -347,18 +368,15 @@ class ShareList<T> implements IObservableList<T> {
    * An `index` which is non-integral.
    */
   insertAll(index: number, values: IterableOrArrayLike<T>): void {
-    let newIndex = index;
-    let count = 0;
+    if (this._shareDoc.connection.state === 'connecting') {
+      return;
+    }
+    let idx = index;
     each(values, value => {
-      ArrayExt.insert(this._array, index++, value);
-      count++;
-    });
-    this._changed.emit({
-      type: 'add',
-      oldIndex: -1,
-      newIndex,
-      oldValues: [],
-      newValues: toArray(values)
+      this._shareDoc.submitOp({
+        p: [...this._path, idx++],
+        li: value
+      });
     });
   }
 
@@ -381,61 +399,91 @@ class ShareList<T> implements IObservableList<T> {
    * A `startIndex` or `endIndex` which is non-integral.
    */
   removeRange(startIndex: number, endIndex: number): number {
-    let oldValues = this._array.slice(startIndex, endIndex);
-    for (let i = startIndex; i < endIndex; i++) {
-      ArrayExt.removeAt(this._array, startIndex);
+    if (this._shareDoc.connection.state === 'connecting') {
+      return 0;
     }
-    this._changed.emit({
-      type: 'remove',
-      oldIndex: startIndex,
-      newIndex: -1,
-      oldValues,
-      newValues: []
-    });
+    for (let i = startIndex; i < endIndex; i++) {
+      this.remove(startIndex);
+    }
     return this.length;
   }
 
-  private _array: Array<T> = [];
+  private _preparePath(path: Array<number | string>): void {
+    let current = this._shareDoc.data;
+    let currentPath = [];
+    for (let i = 0; i < this._path.length - 1; ++i) {
+      let component = this._path[i];
+      currentPath.push(component);
+      if (!current[component]) {
+        this._shareDoc.submitOp({p: currentPath, oi: {}});
+      }
+      current = current[component];
+    }
+  }
+
+  private _onOp(ops: any, isLocal: boolean) {
+    if (ops.length === 0) {
+      return;
+    } else if (ops.length > 1) {
+      throw Error('Unexpected number of ops');
+    }
+    let op = ops[0];
+    if (!isSubpath(this._path, op.p)) {
+      return;
+    }
+
+    let idx = op.p.pop();
+    if (op.li !== undefined && op.ld !== undefined) { // Set case.
+      this._changed.emit({
+        type: 'set',
+        oldIndex: idx,
+        newIndex: idx,
+        oldValues: [op.ld],
+        newValues: [op.li]
+      });
+    } else if (op.li !== undefined) { // Insert case.
+      this._changed.emit({
+        type: 'add',
+        oldIndex: -1,
+        newIndex: idx,
+        oldValues: [],
+        newValues: [op.li]
+      });
+    } else if (op.ld !== undefined) { // Delete case.
+      this._changed.emit({
+        type: 'remove',
+        oldIndex: idx,
+        newIndex: -1,
+        oldValues: [op.ld],
+        newValues: []
+      });
+    } else if (op.lm !== undefined) { // Move case.
+      this._changed.emit({
+        type: 'move',
+        oldIndex: idx,
+        newIndex: op.lm,
+        oldValues: [this.array[op.lm]],
+        newValues: [this.array[op.lm]]
+      });
+    }
+  }
+
   private _isDisposed = false;
   private _itemCmp: (first: T, second: T) => boolean;
   private _changed = new Signal<this, IObservableList.IChangedArgs<T>>(this);
+  private _shareDoc: any;
+  private _path: any[];
 }
 
 
-/**
- * The namespace for `ObservableList` class statics.
- */
-export
-namespace ObservableList {
-  /**
-   * The options used to initialize an observable map.
-   */
-  export
-  interface IOptions<T> {
-    /**
-     * An optional intial set of values.
-     */
-    values?: IterableOrArrayLike<T>;
-
-    /**
-     * The item comparison function for change detection on `set`.
-     *
-     * If not given, strict `===` equality will be used.
-     */
-    itemCmp?: (first: T, second: T) => boolean;
+function isSubpath(subpath: Array<number | string>, path: Array<number | string>): boolean {
+  if (subpath.length > path.length) {
+    return false;
   }
-}
-
-
-/**
- * The namespace for module private data.
- */
-namespace Private {
-  /**
-   * The default strict equality item cmp.
-   */
-  export
-  function itemCmp(first: any, second: any): boolean {
-    return first === second;
+  for (let i = 0; i < subpath.length; ++i) {
+    if (subpath[i] !== path[i]) {
+      return false;
+    }
   }
+  return true;
 }

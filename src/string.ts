@@ -154,26 +154,26 @@ class ShareString implements IObservableString {
       return;
     }
 
-    if (op['oi']) { // Set case.
+    if (op.oi !== undefined) { // Set case.
       this._changed.emit({
         type: 'set',
         start: 0,
-        end: op['oi'].length,
-        value: op['oi']
+        end: op.oi.length,
+        value: op.oi
       });
-    } else if (op['si']) { // Insert case.
+    } else if (op.si) { // Insert case.
       this._changed.emit({
         type: 'insert',
-        start: op['p'][1],
-        end: op['p'][1] + op['si'].length,
-        value: op['si']
+        start: op.p.pop(),
+        end: op.p.pop() + op.si.length,
+        value: op.si
       });
-    } else if (op['sd']) { //Delete case.
+    } else if (op.sd) { //Delete case.
       this._changed.emit({
         type: 'remove',
-        start: op['p'][1],
-        end: op['p'][1] + op['sd'].length,
-        value: op['sd']
+        start: op.p.pop(),
+        end: op.p.pop() + op.sd.length,
+        value: op.sd
       });
     }
   }

@@ -25,8 +25,8 @@ class ShareUndoableList<T extends JSONValue> extends ShareList<T> implements IOb
   /**
    * Construct a new undoable list.
    */
-  constructor() {
-    super();
+  constructor(shareDoc: any, path: Array<number | string>) {
+    super(shareDoc, path);
     this.changed.connect(this._onListChanged, this);
   }
 

@@ -12,12 +12,16 @@ import {
 import {
   IModelDB, IObservableValue, ObservableValue, IObservableString, 
   IObservable, IObservableUndoableList, IObservableJSON,
-  ObservableMap, ObservableUndoableList, ObservableJSON
+  ObservableMap, ObservableJSON
 } from '@jupyterlab/coreutils';
 
 import {
   ShareString
 } from './string';
+
+import {
+  ShareUndoableList
+} from './undoablelist';
 
 declare let require: any;
 let sharedb = require('sharedb/lib/client');
@@ -130,8 +134,7 @@ class ShareModelDB implements IModelDB {
    * JSON Objects and primitives.
    */
   createList<T extends JSONValue>(path: string): IObservableUndoableList<T> {
-    let vec = new ObservableUndoableList<T>(
-      new ObservableUndoableList.IdentitySerializer<T>());
+    let vec = new ShareUndoableList<T>(this._doc, this.fullPath(path).split('.'));
     this._disposables.add(vec);
     this.set(path, vec);
     return vec;
