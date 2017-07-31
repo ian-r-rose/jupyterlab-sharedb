@@ -432,7 +432,7 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
       return;
     }
 
-    let idx = op.p.pop();
+    let idx = op.p.slice(-1)[0];
     if (op.li !== undefined && op.ld !== undefined) { // Set case.
       this._changed.emit({
         type: 'set',

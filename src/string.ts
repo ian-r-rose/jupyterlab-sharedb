@@ -154,6 +154,7 @@ class ShareString implements IObservableString {
       return;
     }
 
+    let last = op.p.slice(-1).pop();
     if (op.oi !== undefined) { // Set case.
       this._changed.emit({
         type: 'set',
@@ -164,15 +165,15 @@ class ShareString implements IObservableString {
     } else if (op.si) { // Insert case.
       this._changed.emit({
         type: 'insert',
-        start: op.p.pop(),
-        end: op.p.pop() + op.si.length,
+        start: last,
+        end: last + op.si.length,
         value: op.si
       });
     } else if (op.sd) { //Delete case.
       this._changed.emit({
         type: 'remove',
-        start: op.p.pop(),
-        end: op.p.pop() + op.sd.length,
+        start: last,
+        end: last + op.sd.length,
         value: op.sd
       });
     }
