@@ -12,7 +12,7 @@ import {
 import {
   IModelDB, IObservableValue, ObservableValue, IObservableString, 
   IObservable, IObservableUndoableList, IObservableJSON,
-  ObservableMap, ObservableJSON
+  ObservableMap, ObservableJSON, ICollaborator, ICollaboratorMap
 } from '@jupyterlab/coreutils';
 
 import {
@@ -25,6 +25,22 @@ import {
 
 declare let require: any;
 let sharedb = require('sharedb/lib/client');
+
+
+/**
+ * Create a dummy collaborator map.
+ */
+class DummyCollaboratorMap extends ObservableMap<ICollaborator> {
+  type: 'Map';
+
+  readonly localCollaborator: ICollaborator = {
+    userId: '1234',
+    sessionId: '5678',
+    displayName: 'A. U. Thor',
+    color: '#00FF33',
+    shortName: 'AU'
+  }
+}
 
 /**
  * A concrete implementation of an `IModelDB`.
@@ -77,6 +93,7 @@ class ShareModelDB implements IModelDB {
    */
   readonly isCollaborative: boolean = true;
 
+  readonly collaborators: ICollaboratorMap = new DummyCollaboratorMap();
   /**
    * A promise resolved when the model is connected
    * to its backend. For the in-memory ModelDB it
