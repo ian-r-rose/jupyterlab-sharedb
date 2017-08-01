@@ -10,7 +10,7 @@ import {
 } from '@phosphor/disposable';
 
 import {
-  IModelDB, IObservableValue, ObservableValue, IObservableString, 
+  IModelDB, IObservableValue, IObservableString,
   IObservable, IObservableUndoableList, IObservableJSON,
   ObservableMap, ObservableJSON, ICollaborator, ICollaboratorMap
 } from '@jupyterlab/coreutils';
@@ -22,6 +22,10 @@ import {
 import {
   ShareUndoableList
 } from './undoablelist';
+
+import {
+  ShareValue
+} from './value';
 
 declare let require: any;
 let sharedb = require('sharedb/lib/client');
@@ -191,7 +195,7 @@ class ShareModelDB implements IModelDB {
    * @returns the value that was created.
    */
   createValue(path: string): IObservableValue {
-    let val = new ObservableValue();
+    let val = new ShareValue(this._doc, this.fullPath(path).split('.'));
     this._disposables.add(val);
     this.set(path, val);
     return val;
@@ -208,7 +212,7 @@ class ShareModelDB implements IModelDB {
     if (!val || val.type !== 'Value') {
       throw Error('Can only call getValue for an ObservableValue');
     }
-    return (val as ObservableValue).get();
+    return (val as ShareValue).get();
   }
 
   /**
@@ -224,7 +228,7 @@ class ShareModelDB implements IModelDB {
     if (!val || val.type !== 'Value') {
       throw Error('Can only call setValue on an ObservableValue');
     }
-    (val as ObservableValue).set(value);
+    (val as ShareValue).set(value);
   }
 
 
