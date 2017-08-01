@@ -6,7 +6,7 @@ import {
 } from '@phosphor/coreutils';
 
 import {
-  ArrayExt, ArrayIterator, IIterator, IterableOrArrayLike, each
+  ArrayExt, ArrayIterator, IIterator, IterableOrArrayLike, each, toArray
 } from '@phosphor/algorithm';
 
 import {
@@ -14,36 +14,28 @@ import {
 } from '@phosphor/signaling';
 
 import {
-  IObservableList
+  IObservableList, ObservableList
 } from '@jupyterlab/coreutils';
+
+import {
+  SharePrimitive, isSubpath
+} from './share';
 
 /**
  * A concrete implementation of [[IObservableList]].
  */
 export
-class ShareList<T extends JSONValue> implements IObservableList<T> {
+class ShareList<T extends JSONValue> extends SharePrimitive implements IObservableList<T> {
   /**
-   * Construct a new observable map.
+   * Construct a new observable list.
    */
   constructor(shareDoc: any, path: Array<string | number>) {
-    this._shareDoc = shareDoc;
-    this._path = path;
-    this._shareDoc.on('op', this._onOp.bind(this));
-    this._shareDoc.on('load', () => {
-      this._preparePath(this._path);
-      let pathExists = true;
-      let current = this._shareDoc.data;
-      for (let component of this._path) {
-        if (!current[component]) {
-          pathExists = false;
-          break;
-        }
-        current = current[component];
-      }
-      if (pathExists) {
-      } else {
-        this._shareDoc.submitOp({p: this._path, oi: []});
-      }
+    super(shareDoc, path);
+    this._list.changed.connect(this._onChange, this);
+    this.connected.then(() => {
+      this._list.changed.disconnect(this._onChange, this);
+      this._list.dispose();
+      this._list = null;
     });
     this._itemCmp = JSONExt.deepEqual;
   }
@@ -62,41 +54,22 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
     return this._changed;
   }
 
-  get array(): T[] {
-    if (this._shareDoc.data) {
-      let current = this._shareDoc.data;
-      for (let component of this._path) {
-        current = current[component];
-      }
-      return current;
-    } else {
-      return [];
-    }
-  }
-
   /**
    * The length of the list.
    */
   get length(): number {
-    return this.array.length;
-  }
-
-  /**
-   * Test whether the list has been disposed.
-   */
-  get isDisposed(): boolean {
-    return this._isDisposed;
+    if (this._list) {
+      return this._list.length;
+    }
+    return this.value.length;
   }
 
   /**
    * Dispose of the resources held by the list.
    */
   dispose(): void {
-    if (this._isDisposed) {
-      return;
-    }
-    this._isDisposed = true;
     Signal.clearData(this);
+    super.dispose();
   }
 
 
@@ -112,7 +85,10 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
    * No changes.
    */
   iter(): IIterator<T> {
-    return new ArrayIterator(this.array);
+    if (this._list) {
+      return this._list.iter();
+    }
+    return new ArrayIterator(this.value);
   }
 
   /**
@@ -126,7 +102,10 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
    * An `index` which is non-integral or out of range.
    */
   get(index: number): T | undefined {
-    return this.array[index];
+    if (this._list) {
+      return this._list.get(index);
+    }
+    return this.value[index];
   }
 
   /**
@@ -146,10 +125,12 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
    * An `index` which is non-integral or out of range.
    */
   set(index: number, value: T): void {
-    if (this._shareDoc.connection.state === 'connecting') {
+    if (this._list) {
+      this._list.set(index, value);
       return;
     }
-    let oldValue = this.array[index];
+
+    let oldValue = this.value[index];
     if (value === undefined) {
       throw new Error('Cannot set an undefined item');
     }
@@ -158,8 +139,8 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
     if (itemCmp(oldValue, value)) {
       return;
     }
-    this._shareDoc.submitOp({
-      p: [...this._path, index],
+    this.doc.submitOp({
+      p: [...this.path, index],
       ld: oldValue,
       li: value
     });
@@ -179,12 +160,12 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
    * No changes.
    */
   push(value: T): number {
-    if (this._shareDoc.connection.state === 'connecting') {
-      return;
+    if (this._list) {
+      return this._list.push(value);
     }
     let len = this.length;
-    this._shareDoc.submitOp({
-      p: [...this._path, len],
+    this.doc.submitOp({
+      p: [...this.path, len],
       li: value
     });
     return len+1;
@@ -210,11 +191,12 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
    * An `index` which is non-integral.
    */
   insert(index: number, value: T): void {
-    if (this._shareDoc.connection.state === 'connecting') {
+    if (this._list) {
+      this._list.insert(index, value);
       return;
     }
-    this._shareDoc.submitOp({
-      p: [...this._path, index],
+    this.doc.submitOp({
+      p: [...this.path, index],
       li: value
     });
   }
@@ -234,11 +216,11 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
    * Iterators pointing at the removed value and beyond are invalidated.
    */
   removeValue(value: T): number {
-    if (this._shareDoc.connection.state === 'connecting') {
-      return -1;
+    if (this._list) {
+      return this._list.removeValue(value);
     }
     let itemCmp = this._itemCmp;
-    let index = ArrayExt.findFirstIndex(this.array, item => {
+    let index = ArrayExt.findFirstIndex(this.value, (item: T) => {
       return itemCmp(item, value);
     });
     this.remove(index);
@@ -263,15 +245,15 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
    * An `index` which is non-integral.
    */
   remove(index: number): T | undefined {
-    if (this._shareDoc.connection.state === 'connecting') {
-      return;
+    if (this._list) {
+      return this._list.remove(index);
     }
     if (index < 0 || index >= this.length) {
       return undefined;
     }
-    let oldValue = this.array[index];
-    this._shareDoc.submitOp({
-      p: [...this._path, index],
+    let oldValue = this.value[index];
+    this.doc.submitOp({
+      p: [...this.path, index],
       ld: oldValue
     });
     return oldValue;
@@ -287,7 +269,8 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
    * All current iterators are invalidated.
    */
   clear(): void {
-    if (this._shareDoc.connection.state === 'connecting') {
+    if (this._list) {
+      this._list.clear();
       return;
     }
     while (this.length) {
@@ -313,7 +296,8 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
    * A `fromIndex` or a `toIndex` which is non-integral.
    */
   move(fromIndex: number, toIndex: number): void {
-    if (this._shareDoc.connection.state === 'connecting') {
+    if (this._list) {
+      this._list.move(fromIndex, toIndex);
       return;
     }
     if (this.length <= 1 || fromIndex === toIndex) {
@@ -335,13 +319,13 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
    * No changes.
    */
   pushAll(values: IterableOrArrayLike<T>): number {
-    if (this._shareDoc.connection.state === 'connecting') {
-      return 0;
+    if (this._list) {
+      return this._list.pushAll(values);
     }
     let idx = this.length;
     each(values, value => {
-      this._shareDoc.submitOp({
-        p: [...this._path, idx++],
+      this.doc.submitOp({
+        p: [...this.path, idx++],
         li: value
       });
     });
@@ -368,13 +352,13 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
    * An `index` which is non-integral.
    */
   insertAll(index: number, values: IterableOrArrayLike<T>): void {
-    if (this._shareDoc.connection.state === 'connecting') {
-      return;
+    if (this._list) {
+      return this._list.insertAll(index, values);
     }
     let idx = index;
     each(values, value => {
-      this._shareDoc.submitOp({
-        p: [...this._path, idx++],
+      this.doc.submitOp({
+        p: [...this.path, idx++],
         li: value
       });
     });
@@ -399,8 +383,8 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
    * A `startIndex` or `endIndex` which is non-integral.
    */
   removeRange(startIndex: number, endIndex: number): number {
-    if (this._shareDoc.connection.state === 'connecting') {
-      return 0;
+    if (this._list) {
+      return this._list.removeRange(startIndex, endIndex);
     }
     for (let i = startIndex; i < endIndex; i++) {
       this.remove(startIndex);
@@ -408,27 +392,14 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
     return this.length;
   }
 
-  private _preparePath(path: Array<number | string>): void {
-    let current = this._shareDoc.data;
-    let currentPath = [];
-    for (let i = 0; i < this._path.length - 1; ++i) {
-      let component = this._path[i];
-      currentPath.push(component);
-      if (!current[component]) {
-        this._shareDoc.submitOp({p: currentPath, oi: {}});
-      }
-      current = current[component];
-    }
-  }
-
-  private _onOp(ops: any, isLocal: boolean) {
+  protected onOp(ops: any, isLocal: boolean) {
     if (ops.length === 0) {
       return;
     } else if (ops.length > 1) {
       throw Error('Unexpected number of ops');
     }
     let op = ops[0];
-    if (!isSubpath(this._path, op.p)) {
+    if (!isSubpath(this.path, op.p)) {
       return;
     }
 
@@ -462,28 +433,36 @@ class ShareList<T extends JSONValue> implements IObservableList<T> {
         type: 'move',
         oldIndex: idx,
         newIndex: op.lm,
-        oldValues: [this.array[op.lm]],
-        newValues: [this.array[op.lm]]
+        oldValues: [this.value[op.lm]],
+        newValues: [this.value[op.lm]]
       });
     }
   }
 
-  private _isDisposed = false;
+  protected copyFromDoc(): void {
+    let value: any[] = this.value;
+    this.clear();
+    this._changed.emit({
+      type: 'add',
+      oldIndex: -1,
+      newIndex: 0,
+      oldValues: [],
+      newValues: value
+    });
+  }
+
+  protected copyToDoc(): void {
+    this.doc.submitOp({
+      p: this.path,
+      oi: toArray(this._list)
+    });
+  }
+
+  private _onChange(source: ObservableList<T>, args: IObservableList.IChangedArgs<T>): void {
+    this._changed.emit(args);
+  }
+
   private _itemCmp: (first: T, second: T) => boolean;
   private _changed = new Signal<this, IObservableList.IChangedArgs<T>>(this);
-  private _shareDoc: any;
-  private _path: any[];
-}
-
-
-function isSubpath(subpath: Array<number | string>, path: Array<number | string>): boolean {
-  if (subpath.length > path.length) {
-    return false;
-  }
-  for (let i = 0; i < subpath.length; ++i) {
-    if (subpath[i] !== path[i]) {
-      return false;
-    }
-  }
-  return true;
+  private _list: ObservableList<T> | null = new ObservableList<T>();
 }

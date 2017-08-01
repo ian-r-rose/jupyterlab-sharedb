@@ -62,6 +62,12 @@ class ShareModelDB implements IModelDB {
     let connection = new sharedb.Connection(socket);
     this._doc = connection.get('examples', 'textarea');
     this._doc.subscribe( () => {
+      let data = this._doc.data;
+      if (data.value) {
+        this._isPrepopulated = true;
+      } else {
+        this._isPrepopulated = false;
+      }
       this._connected.resolve(void 0);
     });
   }
@@ -86,7 +92,9 @@ class ShareModelDB implements IModelDB {
    * Whether the model has been populated with
    * any model values.
    */
-  readonly isPrepopulated: boolean = false;
+  get isPrepopulated(): boolean {
+    return this._isPrepopulated;
+  }
 
   /**
    * Whether the model is collaborative.
@@ -293,6 +301,7 @@ class ShareModelDB implements IModelDB {
   private _disposables = new DisposableSet();
   private _connected = new PromiseDelegate<void>();
   private _doc: any;
+  private _isPrepopulated = false;
 }
 
 /**
